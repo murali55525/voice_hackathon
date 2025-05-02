@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Biometric Authentication</title>
+    <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.6.2/dist/axios.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const App = () => {
+            const [view, setView] = useState('home');
+            const [userId, setUserId] = useState('');
+            const [message, setMessage] = useState('');
+            const [isRecording, setIsRecording] = useState(false);
+            const videoRef = useRef(null);
+            const canvasRef = useRef(null);
+            const mediaRecorderRef = useRef(null);
+            const audioChunksRef = useRef([]);
+            const streamRef = useRef(null);
+
+            useEffect(() => {
+                if (view === 'signup' || view === 'login') {
+                    startWebcam();
+                }
+                return () => stopWebcam();
+            }, [view]);
+
+            const startWebcam = async () => {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    streamRef.current = stream;
+                    videoRef.current.srcObject = stream;
+                    setMessage('Webcam started');
+                } catch (err) {
+                    setMessage('Error accessing webcam: ' + err.message);
+                }
+            };
+
+            const stopWebcam = () => {
+                if (videoRef.current && videoRef.current.srcObject) {
+                    const tracks = videoRef.current.srcObject.getTracks();
+                    tracks.forEach(track => track.stop());
+                    videoRef.current.srcObject = null;
+                    streamRef.current = null;
+                }
+            };
+
+            const captureImage = () => {
+                if (!videoRef.current || !videoRef.current.srcObject) {
+                    setMessage('Webcam not active');
+                    return null;
+                }
+                const context = canvasRef.current.getContext('2d');
+                context.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
+                const imageData = canvasRef.current.toDataURL('image/jpeg');
+                console.log('Captured face image:', imageData.substring(0, 50) + '...');
+                return imageData;
+            };
+
+            const startRecording = async () => {
+                if (isRecording) {
+                    setMessage('Recording in progress, please wait');
+                    return;
+                }
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    streamRef.current = stream;
+                    mediaRecorderRef.current = new MediaRecorder(stream);
+                    audioChunksRef.current = [];
+
+                    mediaRecorderRef.current.ondataavailable = (event) => {
+                        if (event.data.size > 0) {
+                            audioChunksRef.current.push(event.data);
+                        }
+                    };
+
+                    mediaRecorderRef.current.onstop = () => {
+                        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+                        const reader = new FileReader();
+                        reader.readAsDataURL(audioBlob);
+                        reader.onloadend = () => {
+                            const base64Audio = reader.result;
+                            console.log('Captured voice data:', base64Audio.substring(0, 50) + '...');
+                            audioChunksRef.current = [];
+                            stream.getTracks().forEach(track => track.stop());
+                            streamRef.current = null;
+                            setIsRecording(false);
+                            setMessage('Recording finished');
+                            if (view === 'signup') {
+                                handleSignup(base64Audio);
+                            } else {
+                                handleLogin(base64Audio);
+                            }
+                        };
+                    };
+
+                    mediaRecorderRef.current.start();
+                    setIsRecording(true);
+                    setMessage('Recording voice...');
+
+                    setTimeout(() => {
+                        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+                            mediaRecorderRef.current.stop();
+                        }
+                    }, 5000);
+                } catch (err) {
+                    setMessage('Error accessing microphone: ' + err.message);
+                    setIsRecording(false);
+                }
+            };
+
+            const handleSignup = async (voiceData) => {
+                const faceImage = captureImage();
+                if (!faceImage) {
+                    setMessage('Failed to capture face image');
+                    return;
+                }
+                if (!voiceData) {
+                    setMessage('Failed to capture voice data');
+                    return;
+                }
+                try {
+                    const payload = {
+                        user_id: parseInt(userId),
+                        face_image: faceImage,
+                        voice_data: voiceData
+                    };
+                    console.log('Sending signup payload:', {
+                        user_id: payload.user_id,
+                        face_image: payload.face_image.substring(0, 50) + '...',
+                        voice_data: payload.voice_data.substring(0, 50) + '...'
+                    });
+                    const response = await axios.post('http://localhost:5000/signup', payload);
+                    setMessage(response.data.message);
+                } catch (err) {
+                    setMessage('Error during signup: ' + (err.response?.data?.message || err.message));
+                }
+            };
+
+            const handleLogin = async (voiceData) => {
+                const faceImage = captureImage();
+                if (!faceImage) {
+                    setMessage('Failed to capture face image');
+                    return;
+                }
+                if (!voiceData) {
+                    setMessage('Failed to capture voice data');
+                    return;
+                }
+                try {
+                    const payload = {
+                        user_id: parseInt(userId),
+                        face_image: faceImage,
+                        voice_data: voiceData
+                    };
+                    console.log('Sending login payload:', {
+                        user_id: payload.user_id,
+                        face_image: payload.face_image.substring(0, 50) + '...',
+                        voice_data: payload.voice_data.substring(0, 50) + '...'
+                    });
+                    const response = await axios.post('http://localhost:5000/login', payload);
+                    setMessage(response.data.message);
+                } catch (err) {
+                    setMessage('Error during login: ' + (err.response?.data?.message || err.message));
+                }
+            };
+
+            const handleSubmit = () => {
+                if (!userId || isNaN(parseInt(userId)) || parseInt(userId) <= 0) {
+                    setMessage('Please enter a valid positive user ID');
+                    return;
+                }
+                if (isRecording) {
+                    setMessage('Recording in progress, please wait');
+                    return;
+                }
+                startRecording();
+            };
+
+            return (
+                <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4">
+                    {view === 'home' && (
+                        <div className="bg-white p-8 rounded-lg shadow-lg text-center">
+                            <h1 className="text-3xl font-bold mb-4">Biometric Authentication</h1>
+                            <button
+                                onClick={() => setView('signup')}
+                                className="bg-blue-500 text-white px-4 py-2 rounded mr-2 hover:bg-blue-600"
+                            >
+                                Sign Up
+                            </button>
+                            <button
+                                onClick={() => setView('login')}
+                                className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
+                            >
+                                Login
+                            </button>
+                        </div>
+                    )}
+                    {(view === 'signup' || view === 'login') && (
+                        <div className="bg-white p-8 rounded-lg shadow-lg w-full max-w-md">
+                            <h1 className="text-2xl font-bold mb-4">
+                                {view === 'signup' ? 'Sign Up' : 'Login'}
+                            </h1>
+                            <div className="mb-4">
+                                <label className="block text-gray-700">User ID</label>
+                                <input
+                                    type="number"
+                                    value={userId}
+                                    onChange={(e) => setUserId(e.target.value)}
+                                    className="w-full px-3 py-2 border rounded"
+                                    placeholder="Enter user ID"
+                                    disabled={isRecording}
+                                    min="1"
+                                />
+                            </div>
+                            <div className="mb-4">
+                                <video
+                                    ref={videoRef}
+                                    autoPlay
+                                    className="w-full rounded"
+                                    style={{ transform: 'scaleX(-1)' }}
+                                ></video>
+                                <canvas ref={canvasRef} width="640" height="480" className="hidden"></canvas>
+                            </div>
+                            <button
+                                onClick={handleSubmit}
+                                disabled={isRecording}
+                                className={`w-full py-2 rounded text-white ${isRecording ? 'bg-gray-400' : 'bg-blue-500 hover:bg-blue-600'}`}
+                            >
+                                {isRecording ? 'Recording...' : 'Capture Biometrics'}
+                            </button>
+                            {message && (
+                                <p className={`mt-4 text-center ${message.includes('successfully') ? 'text-green-600' : 'text-red-600'}`}>
+                                    {message}
+                                </p>
+                            )}
+                            <button
+                                onClick={() => {
+                                    setView('home');
+                                    setMessage('');
+                                    setUserId('');
+                                    setIsRecording(false);
+                                    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+                                        mediaRecorderRef.current.stop();
+                                    }
+                                }}
+                                className="mt-4 w-full py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+                            >
+                                Back
+                            </button>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
